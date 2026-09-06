@@ -1,21 +1,20 @@
 import streamlit as st
-from google import genai
-from google.genai import types
+from groq import Groq
 import json
 import urllib.parse
 
 st.set_page_config(page_title="AI YouTube Creator", page_icon="🎬", layout="wide")
 
 st.title("🎬 YouTube Content Studio AI")
-st.caption("Generate complete video packages: titles, descriptions, scripts, and thumbnails.")
+st.caption("Generate complete video packages powered by Groq (Llama 3.3 70B).")
 
-# Check if key is stored in Streamlit Secrets, otherwise fall back to user input
-gemini_api_key = st.secrets.get("GEMINI_API_KEY", None)
+# Checks for either GROQ_API_KEY or GEMINI_API_KEY from Secrets
+groq_api_key = st.secrets.get("GROQ_API_KEY") or st.secrets.get("GEMINI_API_KEY", None)
 
 with st.sidebar:
     st.header("Configuration")
-    if not gemini_api_key:
-        gemini_api_key = st.text_input("Gemini API Key", type="password")
+    if not groq_api_key:
+        groq_api_key = st.text_input("Groq API Key", type="password")
     topic = st.text_input("Video Topic / Keyword", placeholder="e.g., How to Learn C++ in 2026")
     target_audience = st.text_input("Target Audience", placeholder="e.g., Beginners, CS Students")
     tone = st.selectbox("Tone", ["Fast-paced & Engaging", "Documentary & Serious", "Humorous & Punchy", "Step-by-Step Educational"])
@@ -37,27 +36,28 @@ Return ONLY a valid JSON object matching this schema:
 """
 
 if generate_btn:
-    if not gemini_api_key:
-        st.error("Please provide a Gemini API Key in the sidebar or via Streamlit Secrets.")
+    if not groq_api_key:
+        st.error("Please provide a Groq API Key in the sidebar or via Streamlit Secrets.")
     elif not topic:
         st.error("Please provide a video topic.")
     else:
-        with st.spinner("Writing script and designing thumbnail..."):
+        with st.spinner("Generating script and thumbnail with Groq..."):
             try:
-                client = genai.Client(api_key=gemini_api_key)
+                client = Groq(api_key=groq_api_key)
                 user_prompt = f"Create a full package for a video about '{topic}'. Audience: {target_audience}. Tone: {tone}. Target duration: {duration}."
                 
-                response = client.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=user_prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=SYSTEM_PROMPT,
-                        response_mime_type="application/json",
-                        temperature=0.7
-                    )
+                chat_completion = client.chat.completions.create(
+                    messages=[
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    model="llama-3.3-70b-versatile",
+                    response_format={"type": "json_object"},
+                    temperature=0.7,
                 )
                 
-                data = json.loads(response.text)
+                response_text = chat_completion.choices[0].message.content
+                data = json.loads(response_text)
                 
                 tab_titles, tab_script, tab_desc, tab_thumb = st.tabs(["📌 Titles & Tags", "📜 Script & B-Roll", "📝 SEO Description", "🖼️ Thumbnail"])
                 
