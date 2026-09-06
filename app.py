@@ -2,14 +2,13 @@ import streamlit as st
 from google import genai
 from google.genai import types
 import json
-import urllib.parse
 
 st.set_page_config(page_title="AI YouTube Creator", page_icon="🎬", layout="wide")
 
 st.title("🎬 YouTube Content Studio AI")
-st.caption("Generate complete video packages powered by Google Gemini.")
+st.caption("Generate complete video packages powered entirely by Google Gemini & Imagen 3.")
 
-# Read key from Streamlit Secrets or sidebar
+# Retrieve Gemini API Key from Streamlit Secrets or sidebar
 gemini_api_key = st.secrets.get("GEMINI_API_KEY", None)
 
 with st.sidebar:
@@ -38,7 +37,7 @@ Return ONLY a valid JSON object matching this schema:
 
 if generate_btn:
     if not gemini_api_key:
-        st.error("Please provide a Gemini API Key in Streamlit Secrets or the sidebar.")
+        st.error("Please provide a Gemini API Key in the sidebar or via Streamlit Secrets.")
     elif not topic:
         st.error("Please provide a video topic.")
     else:
@@ -47,6 +46,7 @@ if generate_btn:
                 client = genai.Client(api_key=gemini_api_key.strip())
                 user_prompt = f"Create a full package for a video about '{topic}'. Audience: {target_audience}. Tone: {tone}. Target duration: {duration}."
                 
+                # 1. Generate Structured Content with Gemini 2.5 Flash
                 response = client.models.generate_content(
                     model="gemini-2.5-flash",
                     contents=user_prompt,
@@ -81,13 +81,26 @@ if generate_btn:
                     st.text_area("Copy Description", value=data.get("description", ""), height=250)
                     
                 with tab_thumb:
-                    st.subheader("Generated Thumbnail Concept")
+                    st.subheader("Generated Thumbnail (Google Imagen 3)")
                     t_prompt = data.get("thumbnail_prompt", "")
-                    st.write(f"**Image Prompt:** _{t_prompt}_")
+                    st.write(f"**Prompt:** _{t_prompt}_")
                     
-                    encoded_prompt = urllib.parse.quote(t_prompt)
-                    thumbnail_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1280&height=720&nologo=true"
-                    st.image(thumbnail_url, caption="Generated via Pollinations.ai (1280x720)", use_container_width=True)
-                    
+                    # 2. Generate Image with Google Imagen 3
+                    with st.spinner("Rendering widescreen thumbnail with Google Imagen 3..."):
+                        try:
+                            img_response = client.models.generate_images(
+                                model="imagen-3.0-generate-002",
+                                prompt=t_prompt,
+                                config=dict(
+                                    number_of_images=1,
+                                    aspect_ratio="16:9",
+                                )
+                            )
+                            img_bytes = img_response.generated_images[0].image.image_bytes
+                            st.image(img_bytes, caption="Generated via Google Imagen 3 (16:9)", use_container_width=True)
+                        except Exception as img_err:
+                            st.error(f"Imagen Error: {img_err}")
+                            st.info("💡 Note: Google AI Studio requires a linked billing account to call the Imagen API ($0.03/image). If billing is unlinked, you can revert this section to Pollinations.ai for free rendering.")
+                            
             except Exception as e:
                 st.error(f"Execution Error: {e}")
