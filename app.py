@@ -6,7 +6,7 @@ import urllib.parse
 st.set_page_config(page_title="AI YouTube Creator", page_icon="🎬", layout="wide")
 
 st.title("🎬 YouTube Content Studio AI")
-st.caption("Generate complete video packages powered by Groq (Llama 3.3 70B).")
+st.caption("Generate complete video packages powered by Groq (Llama 3.1 8B).")
 
 # Checks for either GROQ_API_KEY or GEMINI_API_KEY from Secrets
 groq_api_key = st.secrets.get("GROQ_API_KEY") or st.secrets.get("GEMINI_API_KEY", None)
@@ -51,7 +51,7 @@ if generate_btn:
                         {"role": "system", "content": SYSTEM_PROMPT},
                         {"role": "user", "content": user_prompt}
                     ],
-                    model="llama-3.3-70b-versatile",
+                    model="llama-3.1-8b-instant",
                     response_format={"type": "json_object"},
                     temperature=0.7,
                 )
