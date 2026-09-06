@@ -9,8 +9,12 @@ st.set_page_config(page_title="AI YouTube Creator", page_icon="🎬", layout="wi
 st.title("🎬 YouTube Content Studio AI")
 st.caption("Generate complete video packages: titles, descriptions, scripts, and thumbnails.")
 
+# Check if key is configured in Streamlit Secrets, otherwise fallback to input
+gemini_api_key = st.secrets.get("GEMINI_API_KEY", None)
+
 with st.sidebar:
     st.header("Configuration")
+    if not gemini_api_key:
     gemini_api_key = st.text_input("Gemini API Key", type="password")
     topic = st.text_input("Video Topic / Keyword", placeholder="e.g., How to Learn C++ in 2026")
     target_audience = st.text_input("Target Audience", placeholder="e.g., Beginners, CS Students")
