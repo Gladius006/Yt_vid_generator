@@ -9,13 +9,13 @@ st.set_page_config(page_title="AI YouTube Creator", page_icon="🎬", layout="wi
 st.title("🎬 YouTube Content Studio AI")
 st.caption("Generate complete video packages: titles, descriptions, scripts, and thumbnails.")
 
-# Check if key is configured in Streamlit Secrets, otherwise fallback to input
+# Check if key is stored in Streamlit Secrets, otherwise fall back to user input
 gemini_api_key = st.secrets.get("GEMINI_API_KEY", None)
 
 with st.sidebar:
     st.header("Configuration")
     if not gemini_api_key:
-    gemini_api_key = st.text_input("Gemini API Key", type="password")
+        gemini_api_key = st.text_input("Gemini API Key", type="password")
     topic = st.text_input("Video Topic / Keyword", placeholder="e.g., How to Learn C++ in 2026")
     target_audience = st.text_input("Target Audience", placeholder="e.g., Beginners, CS Students")
     tone = st.selectbox("Tone", ["Fast-paced & Engaging", "Documentary & Serious", "Humorous & Punchy", "Step-by-Step Educational"])
@@ -38,7 +38,7 @@ Return ONLY a valid JSON object matching this schema:
 
 if generate_btn:
     if not gemini_api_key:
-        st.error("Please provide a Gemini API Key in the sidebar.")
+        st.error("Please provide a Gemini API Key in the sidebar or via Streamlit Secrets.")
     elif not topic:
         st.error("Please provide a video topic.")
     else:
