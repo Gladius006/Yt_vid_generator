@@ -6,7 +6,7 @@ import urllib.parse
 st.set_page_config(page_title="AI YouTube Creator", page_icon="🎬", layout="wide")
 
 st.title("🎬 YouTube Content Studio AI")
-st.caption("Generate complete video packages powered by Groq (Llama 3.1 8B).")
+st.caption("Generate complete video packages powered by Groq.")
 
 # Checks for either GROQ_API_KEY or GEMINI_API_KEY from Secrets
 groq_api_key = st.secrets.get("GROQ_API_KEY") or st.secrets.get("GEMINI_API_KEY", None)
@@ -15,6 +15,22 @@ with st.sidebar:
     st.header("Configuration")
     if not groq_api_key:
         groq_api_key = st.text_input("Groq API Key", type="password")
+
+    # Fetch models currently active for your specific Groq key
+    model_options = ["llama3-8b-8192", "mixtral-8x7b-32768"]
+    if groq_api_key:
+        try:
+            temp_client = Groq(api_key=groq_api_key)
+            fetched = [
+                m.id for m in temp_client.models.list().data 
+                if "whisper" not in m.id and "guard" not in m.id
+            ]
+            if fetched:
+                model_options = fetched
+        except Exception:
+            pass
+
+    selected_model = st.selectbox("Active Groq Model", model_options)
     topic = st.text_input("Video Topic / Keyword", placeholder="e.g., How to Learn C++ in 2026")
     target_audience = st.text_input("Target Audience", placeholder="e.g., Beginners, CS Students")
     tone = st.selectbox("Tone", ["Fast-paced & Engaging", "Documentary & Serious", "Humorous & Punchy", "Step-by-Step Educational"])
@@ -41,7 +57,7 @@ if generate_btn:
     elif not topic:
         st.error("Please provide a video topic.")
     else:
-        with st.spinner("Generating script and thumbnail with Groq..."):
+        with st.spinner(f"Generating package with {selected_model}..."):
             try:
                 client = Groq(api_key=groq_api_key)
                 user_prompt = f"Create a full package for a video about '{topic}'. Audience: {target_audience}. Tone: {tone}. Target duration: {duration}."
@@ -51,7 +67,7 @@ if generate_btn:
                         {"role": "system", "content": SYSTEM_PROMPT},
                         {"role": "user", "content": user_prompt}
                     ],
-                    model="llama-3.1-8b-instant",
+                    model=selected_model,
                     response_format={"type": "json_object"},
                     temperature=0.7,
                 )
