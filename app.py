@@ -20,7 +20,7 @@ with st.sidebar:
     
     preferred_model = st.selectbox(
         "Preferred Gemini Model",
-        ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-1.5-flash"]
+        ["gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-1.5-flash"]
     )
     topic = st.text_input("Video Topic / Keyword", placeholder="e.g., How to Learn C++ in 2026")
     target_audience = st.text_input("Target Audience", placeholder="e.g., Beginners, CS Students")
@@ -48,8 +48,8 @@ if generate_btn:
     elif not topic:
         st.error("Please provide a video topic.")
     else:
-        # Fallback sequence to handle 503 capacity issues automatically
-        all_models = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-1.5-flash"]
+        # Fallback sequence using currently active Google models
+        all_models = ["gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-1.5-flash"]
         fallback_models = [preferred_model] + [m for m in all_models if m != preferred_model]
         
         client = genai.Client(api_key=gemini_api_key.strip())
@@ -74,19 +74,20 @@ if generate_btn:
                     used_model = model_id
                     break
                 except APIError as e:
-                    if e.code == 503 or "UNAVAILABLE" in str(e):
-                        st.warning(f"⚠️ `{model_id}` is overloaded right now. Trying backup model...")
+                    # Catch overloads (503), deprecations (404), and rate-limits to continue failover
+                    err_str = str(e).upper()
+                    if any(code in err_str for code in ["503", "404", "UNAVAILABLE", "NOT_FOUND", "RESOURCE_EXHAUSTED"]):
+                        st.warning(f"⚠️ `{model_id}` unavailable or overloaded. Trying next backup model...")
                         continue
                     else:
-                        st.error(f"API Error: {e}")
+                        st.error(f"API Error on {model_id}: {e}")
                         break
                 except Exception as ex:
-                    st.error(f"Unexpected Error: {ex}")
+                    st.error(f"Unexpected Error on {model_id}: {ex}")
                     break
 
         if response_text:
             try:
-                # Save generated data in session state so modifying inputs doesn't wipe output
                 st.session_state["generated_data"] = json.loads(response_text)
                 st.session_state["used_model"] = used_model
                 st.session_state["topic"] = topic
@@ -124,16 +125,15 @@ if "generated_data" in st.session_state:
         st.subheader("Generated Thumbnail Concept (FLUX Engine)")
         raw_prompt = data.get("thumbnail_prompt", st.session_state.get("topic", ""))
         
-        # Editable prompt allowing interactive tweaking without regenerating the whole script
+        # Interactive prompt editor
         custom_prompt = st.text_input("Thumbnail Visual Prompt (Editable):", value=raw_prompt)
         clean_prompt = custom_prompt.strip().replace("\n", " ")
         encoded_prompt = urllib.parse.quote(clean_prompt)
         
-        # Route to Pollinations using FLUX.1 with auto-enhancement
         thumbnail_url = (
             f"https://image.pollinations.ai/prompt/{encoded_prompt}"
             f"?width=1280&height=720&model=flux&nologo=true&enhance=true"
         )
         
         st.image(thumbnail_url, caption="Generated via FLUX on Pollinations.ai (1280x720)", use_container_width=True)
-        st.caption("Tip: You can edit the text box above (e.g., adding 'voxel art' or 'cyberpunk cinematic lighting') and press Enter to re-render the image.")
+        st.caption("Tip: You can edit the prompt box above and press Enter to adjust the thumbnail.")
