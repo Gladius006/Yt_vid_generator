@@ -1,16 +1,16 @@
+import json
+import urllib.parse
 import streamlit as st
 from google import genai
 from google.genai import types
 from google.genai.errors import APIError
-import json
-import urllib.parse
 
 st.set_page_config(page_title="AI YouTube Creator", page_icon="🎬", layout="wide")
 
 st.title("🎬 YouTube Content Studio AI")
-st.caption("Generate complete video packages powered by Google Gemini.")
+st.caption("Generate complete video packages: titles, descriptions, scripts, and FLUX thumbnails.")
 
-# Read key from Streamlit Secrets or sidebar
+# Check if key is configured in Streamlit Secrets, otherwise fallback to input
 gemini_api_key = st.secrets.get("GEMINI_API_KEY", None)
 
 with st.sidebar:
@@ -38,7 +38,7 @@ Return ONLY a valid JSON object matching this schema:
   "script": [
     {"timestamp": "0:00 - 0:30", "visual_cue": "Description of visuals/b-roll", "narration": "Exact spoken narration."}
   ],
-  "thumbnail_prompt": "A detailed visual description for an AI image generator (vibrant lighting, expressive subject, high resolution, no text)."
+  "thumbnail_prompt": "A direct, keyword-focused visual prompt for an image model. MUST explicitly name the core subject (e.g. 'Minecraft blocky voxel cube world', 'C++ code syntax floating on cyber screen'). Include art style, vivid lighting, sharp focus, 3D render style, 16:9 composition. Keep under 35 words. Do not write full sentences."
 }
 """
 
@@ -48,7 +48,7 @@ if generate_btn:
     elif not topic:
         st.error("Please provide a video topic.")
     else:
-        # Define priority order starting with the user's preferred model
+        # Fallback sequence to handle 503 capacity issues automatically
         all_models = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-1.5-flash"]
         fallback_models = [preferred_model] + [m for m in all_models if m != preferred_model]
         
@@ -58,7 +58,7 @@ if generate_btn:
         response_text = None
         used_model = None
 
-        with st.spinner("Generating script and packaging metadata..."):
+        with st.spinner("Writing script and generating package..."):
             for model_id in fallback_models:
                 try:
                     response = client.models.generate_content(
@@ -72,10 +72,10 @@ if generate_btn:
                     )
                     response_text = response.text
                     used_model = model_id
-                    break  # Request succeeded, exit retry loop
+                    break
                 except APIError as e:
                     if e.code == 503 or "UNAVAILABLE" in str(e):
-                        st.warning(f"⚠️ `{model_id}` is experiencing high traffic. Failing over to backup model...")
+                        st.warning(f"⚠️ `{model_id}` is overloaded right now. Trying backup model...")
                         continue
                     else:
                         st.error(f"API Error: {e}")
@@ -86,38 +86,54 @@ if generate_btn:
 
         if response_text:
             try:
-                data = json.loads(response_text)
-                st.success(f"Generated successfully using `{used_model}`")
-                
-                tab_titles, tab_script, tab_desc, tab_thumb = st.tabs(["📌 Titles & Tags", "📜 Script & B-Roll", "📝 SEO Description", "🖼️ Thumbnail"])
-                
-                with tab_titles:
-                    st.subheader("High-CTR Titles")
-                    for i, t in enumerate(data.get("titles", []), 1):
-                        st.write(f"**{i}.** {t}")
-                    st.divider()
-                    st.subheader("Tags")
-                    st.code(", ".join(data.get("tags", [])))
-                    
-                with tab_script:
-                    st.subheader("Scene-by-Scene Script")
-                    for scene in data.get("script", []):
-                        with st.expander(f"⏱️ {scene.get('timestamp', 'Scene')}"):
-                            st.write(f"**Visuals:** _{scene.get('visual_cue')}_")
-                            st.write(f"**Narration:** {scene.get('narration')}")
-                            
-                with tab_desc:
-                    st.subheader("SEO Description")
-                    st.text_area("Copy Description", value=data.get("description", ""), height=250)
-                    
-                with tab_thumb:
-                    st.subheader("Generated Thumbnail Concept")
-                    t_prompt = data.get("thumbnail_prompt", "")
-                    st.write(f"**Image Prompt:** _{t_prompt}_")
-                    
-                    encoded_prompt = urllib.parse.quote(t_prompt)
-                    thumbnail_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1280&height=720&nologo=true"
-                    st.image(thumbnail_url, caption="Generated via Pollinations.ai (1280x720)", use_container_width=True)
-                    
+                # Save generated data in session state so modifying inputs doesn't wipe output
+                st.session_state["generated_data"] = json.loads(response_text)
+                st.session_state["used_model"] = used_model
+                st.session_state["topic"] = topic
             except json.JSONDecodeError:
-                st.error("Failed to parse structured output from model. Please try again.")
+                st.error("Failed to parse structured JSON from model response. Please try again.")
+
+# Display results if available in session state
+if "generated_data" in st.session_state:
+    data = st.session_state["generated_data"]
+    used_model = st.session_state.get("used_model", "Gemini")
+    st.success(f"Generated successfully using `{used_model}`")
+    
+    tab_titles, tab_script, tab_desc, tab_thumb = st.tabs(["📌 Titles & Tags", "📜 Script & B-Roll", "📝 SEO Description", "🖼️ Thumbnail"])
+    
+    with tab_titles:
+        st.subheader("High-CTR Titles")
+        for i, t in enumerate(data.get("titles", []), 1):
+            st.write(f"**{i}.** {t}")
+        st.divider()
+        st.subheader("Tags")
+        st.code(", ".join(data.get("tags", [])))
+        
+    with tab_script:
+        st.subheader("Scene-by-Scene Script")
+        for scene in data.get("script", []):
+            with st.expander(f"⏱️ {scene.get('timestamp', 'Scene')}"):
+                st.write(f"**Visuals:** _{scene.get('visual_cue')}_")
+                st.write(f"**Narration:** {scene.get('narration')}")
+                
+    with tab_desc:
+        st.subheader("SEO Description")
+        st.text_area("Copy Description", value=data.get("description", ""), height=250)
+        
+    with tab_thumb:
+        st.subheader("Generated Thumbnail Concept (FLUX Engine)")
+        raw_prompt = data.get("thumbnail_prompt", st.session_state.get("topic", ""))
+        
+        # Editable prompt allowing interactive tweaking without regenerating the whole script
+        custom_prompt = st.text_input("Thumbnail Visual Prompt (Editable):", value=raw_prompt)
+        clean_prompt = custom_prompt.strip().replace("\n", " ")
+        encoded_prompt = urllib.parse.quote(clean_prompt)
+        
+        # Route to Pollinations using FLUX.1 with auto-enhancement
+        thumbnail_url = (
+            f"https://image.pollinations.ai/prompt/{encoded_prompt}"
+            f"?width=1280&height=720&model=flux&nologo=true&enhance=true"
+        )
+        
+        st.image(thumbnail_url, caption="Generated via FLUX on Pollinations.ai (1280x720)", use_container_width=True)
+        st.caption("Tip: You can edit the text box above (e.g., adding 'voxel art' or 'cyberpunk cinematic lighting') and press Enter to re-render the image.")
