@@ -1,21 +1,27 @@
 import streamlit as st
 from google import genai
 from google.genai import types
+from google.genai.errors import APIError
 import json
 import urllib.parse
 
 st.set_page_config(page_title="AI YouTube Creator", page_icon="🎬", layout="wide")
 
 st.title("🎬 YouTube Content Studio AI")
-st.caption("Generate complete video packages: titles, descriptions, scripts, and thumbnails.")
+st.caption("Generate complete video packages powered by Google Gemini.")
 
-# Check if key is stored in Streamlit Secrets, otherwise fall back to user input
+# Read key from Streamlit Secrets or sidebar
 gemini_api_key = st.secrets.get("GEMINI_API_KEY", None)
 
 with st.sidebar:
     st.header("Configuration")
     if not gemini_api_key:
         gemini_api_key = st.text_input("Gemini API Key", type="password")
+    
+    preferred_model = st.selectbox(
+        "Preferred Gemini Model",
+        ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-1.5-flash"]
+    )
     topic = st.text_input("Video Topic / Keyword", placeholder="e.g., How to Learn C++ in 2026")
     target_audience = st.text_input("Target Audience", placeholder="e.g., Beginners, CS Students")
     tone = st.selectbox("Tone", ["Fast-paced & Engaging", "Documentary & Serious", "Humorous & Punchy", "Step-by-Step Educational"])
@@ -42,22 +48,46 @@ if generate_btn:
     elif not topic:
         st.error("Please provide a video topic.")
     else:
-        with st.spinner("Writing script and designing thumbnail..."):
-            try:
-                client = genai.Client(api_key=gemini_api_key)
-                user_prompt = f"Create a full package for a video about '{topic}'. Audience: {target_audience}. Tone: {tone}. Target duration: {duration}."
-                
-                response = client.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=user_prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=SYSTEM_PROMPT,
-                        response_mime_type="application/json",
-                        temperature=0.7
+        # Define priority order starting with the user's preferred model
+        all_models = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-1.5-flash"]
+        fallback_models = [preferred_model] + [m for m in all_models if m != preferred_model]
+        
+        client = genai.Client(api_key=gemini_api_key.strip())
+        user_prompt = f"Create a full package for a video about '{topic}'. Audience: {target_audience}. Tone: {tone}. Target duration: {duration}."
+        
+        response_text = None
+        used_model = None
+
+        with st.spinner("Generating script and packaging metadata..."):
+            for model_id in fallback_models:
+                try:
+                    response = client.models.generate_content(
+                        model=model_id,
+                        contents=user_prompt,
+                        config=types.GenerateContentConfig(
+                            system_instruction=SYSTEM_PROMPT,
+                            response_mime_type="application/json",
+                            temperature=0.7
+                        )
                     )
-                )
-                
-                data = json.loads(response.text)
+                    response_text = response.text
+                    used_model = model_id
+                    break  # Request succeeded, exit retry loop
+                except APIError as e:
+                    if e.code == 503 or "UNAVAILABLE" in str(e):
+                        st.warning(f"⚠️ `{model_id}` is experiencing high traffic. Failing over to backup model...")
+                        continue
+                    else:
+                        st.error(f"API Error: {e}")
+                        break
+                except Exception as ex:
+                    st.error(f"Unexpected Error: {ex}")
+                    break
+
+        if response_text:
+            try:
+                data = json.loads(response_text)
+                st.success(f"Generated successfully using `{used_model}`")
                 
                 tab_titles, tab_script, tab_desc, tab_thumb = st.tabs(["📌 Titles & Tags", "📜 Script & B-Roll", "📝 SEO Description", "🖼️ Thumbnail"])
                 
@@ -89,5 +119,5 @@ if generate_btn:
                     thumbnail_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1280&height=720&nologo=true"
                     st.image(thumbnail_url, caption="Generated via Pollinations.ai (1280x720)", use_container_width=True)
                     
-            except Exception as e:
-                st.error(f"Execution Error: {e}")
+            except json.JSONDecodeError:
+                st.error("Failed to parse structured output from model. Please try again.")
