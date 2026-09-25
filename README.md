@@ -25,5 +25,6 @@ script, a description, hashtags, search tags, and a thumbnail image.
 
 The app calls Gemini once for the text package and separately when you click
 **Generate thumbnail**. API availability, quotas, and billing depend on your
-Gemini account. If image generation is unavailable, the thumbnail prompt and
-all text outputs remain available. No key or generated content is committed.
+Gemini account. If image generation is blocked by model access or quota, the app
+creates a designed 1280×720 thumbnail from the generated title instead.
+No key or generated content is committed.

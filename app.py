@@ -9,7 +9,7 @@ import streamlit as st
 from google import genai
 from google.genai import types
 from google.genai.errors import APIError
-from PIL import Image, ImageOps
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 from pydantic import BaseModel, ValidationError
 from streamlit.errors import StreamlitSecretNotFoundError
 
@@ -116,6 +116,51 @@ def generate_thumbnail(client, prompt: str) -> bytes:
     raise ValueError("The image model returned no image. Try another prompt.")
 
 
+def design_thumbnail(title: str) -> bytes:
+    """Create a readable 16:9 thumbnail when image API quota is unavailable."""
+    image = Image.new("RGB", (1280, 720))
+    draw = ImageDraw.Draw(image)
+    for y in range(720):
+        draw.line((0, y, 1280, y), fill=(10 + y // 80, 21 + y // 42, 45 + y // 25))
+    draw.ellipse((830, -250, 1450, 370), fill=(17, 102, 146))
+    draw.ellipse((940, 320, 1400, 780), fill=(27, 67, 130))
+    draw.rounded_rectangle((75, 74, 320, 130), radius=20, fill=(255, 203, 57))
+
+    def font(size: int):
+        for name in ("DejaVuSans-Bold.ttf", "arialbd.ttf"):
+            try:
+                return ImageFont.truetype(name, size)
+            except OSError:
+                pass
+        return ImageFont.load_default()
+
+    draw.text((98, 89), "NEW VIDEO", font=font(28), fill=(18, 28, 54))
+    words = title.strip().split() or ["YOUR VIDEO"]
+    for size in range(100, 43, -4):
+        title_font = font(size)
+        lines = []
+        line = ""
+        for word in words:
+            candidate = f"{line} {word}".strip()
+            if line and draw.textbbox((0, 0), candidate, font=title_font)[2] > 1030:
+                lines.append(line)
+                line = word
+            else:
+                line = candidate
+        lines.append(line)
+        if len(lines) <= 4 and len(lines) * (size + 16) <= 435:
+            break
+    y = 174
+    for line in lines:
+        draw.text((73, y + 5), line, font=title_font, fill=(0, 0, 0), stroke_width=4, stroke_fill=(0, 0, 0))
+        draw.text((73, y), line, font=title_font, fill="white", stroke_width=2, stroke_fill=(18, 28, 54))
+        y += size + 16
+    draw.rounded_rectangle((75, 636, 575, 649), radius=6, fill=(255, 203, 57))
+    output = io.BytesIO()
+    image.save(output, format="JPEG", quality=88, optimize=True)
+    return output.getvalue()
+
+
 def script_text(package: Package) -> str:
     return "\n\n".join(
         f"{scene.timestamp}\nVisual: {scene.visual_cue}\nNarration: {scene.narration}"
@@ -213,9 +258,15 @@ def main() -> None:
             else:
                 try:
                     with st.spinner("Generating thumbnail..."):
-                        st.session_state["thumbnail_bytes"] = generate_thumbnail(
-                            genai.Client(api_key=api_key.strip()), image_prompt
-                        )
+                        try:
+                            st.session_state["thumbnail_bytes"] = generate_thumbnail(
+                                genai.Client(api_key=api_key.strip()), image_prompt
+                            )
+                        except APIError as exc:
+                            if getattr(exc, "code", None) not in (403, 404, 429):
+                                raise
+                            st.session_state["thumbnail_bytes"] = design_thumbnail(package.titles[0])
+                            st.warning("Gemini image generation is unavailable for this API key. A designed thumbnail was created instead.")
                 except (APIError, ValueError, OSError) as exc:
                     st.error(f"Thumbnail generation failed: {exc}")
         if st.session_state.get("thumbnail_bytes"):
