@@ -1,139 +1,239 @@
-import json
-import urllib.parse
+"""AI YouTube content package generator."""
+
+from __future__ import annotations
+
+import io
+import os
+
 import streamlit as st
 from google import genai
 from google.genai import types
 from google.genai.errors import APIError
+from PIL import Image, ImageOps
+from pydantic import BaseModel, ValidationError
+from streamlit.errors import StreamlitSecretNotFoundError
 
-st.set_page_config(page_title="AI YouTube Creator", page_icon="🎬", layout="wide")
+TEXT_MODELS = ("gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.8-flash")
+IMAGE_MODEL = "gemini-3.1-flash-lite-image"
 
-st.title("🎬 YouTube Content Studio AI")
-st.caption("Generate complete video packages: titles, descriptions, scripts, and FLUX thumbnails.")
 
-# Check if key is configured in Streamlit Secrets, otherwise fallback to input
-gemini_api_key = st.secrets.get("GEMINI_API_KEY", None)
+class Scene(BaseModel):
+    timestamp: str
+    visual_cue: str
+    narration: str
 
-with st.sidebar:
-    st.header("Configuration")
-    if not gemini_api_key:
-        gemini_api_key = st.text_input("Gemini API Key", type="password")
-    
-    preferred_model = st.selectbox(
-        "Preferred Gemini Model",
-        ["gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-1.5-flash"]
-    )
-    topic = st.text_input("Video Topic / Keyword", placeholder="e.g., How to Learn C++ in 2026")
-    target_audience = st.text_input("Target Audience", placeholder="e.g., Beginners, CS Students")
-    tone = st.selectbox("Tone", ["Fast-paced & Engaging", "Documentary & Serious", "Humorous & Punchy", "Step-by-Step Educational"])
-    duration = st.selectbox("Target Duration", ["Shorts / Under 60s", "3 - 5 Minutes", "8 - 10 Minutes"])
-    generate_btn = st.button("Generate Package", type="primary", use_container_width=True)
+
+class Package(BaseModel):
+    titles: list[str]
+    description: str
+    hashtags: list[str]
+    tags: list[str]
+    script: list[Scene]
+    thumbnail_prompt: str
+
 
 SYSTEM_PROMPT = """
 You are an expert YouTube content strategist and scriptwriter.
-Return ONLY a valid JSON object matching this schema:
-{
-  "titles": ["Title 1", "Title 2", "Title 3", "Title 4", "Title 5"],
-  "description": "Full SEO-optimized description with hashtags.",
-  "tags": ["tag1", "tag2", "tag3"],
-  "script": [
-    {"timestamp": "0:00 - 0:30", "visual_cue": "Description of visuals/b-roll", "narration": "Exact spoken narration."}
-  ],
-  "thumbnail_prompt": "A direct, keyword-focused visual prompt for an image model. MUST explicitly name the core subject (e.g. 'Minecraft blocky voxel cube world', 'C++ code syntax floating on cyber screen'). Include art style, vivid lighting, sharp focus, 3D render style, 16:9 composition. Keep under 35 words. Do not write full sentences."
-}
+Create a useful, accurate package for the requested topic, audience, tone, and
+duration. Include five distinct titles, a publishable description, 5-10
+hashtags beginning with #, 8-15 plain search tags, and a scene-by-scene script
+with spoken narration and visual cues. Make the narration long enough for the
+requested duration. Write a thumbnail prompt with a clear subject, strong
+contrast, and 16:9 composition. Avoid misleading claims and invented facts.
 """
 
-if generate_btn:
-    if not gemini_api_key:
-        st.error("Please provide a Gemini API Key in the sidebar or via Streamlit Secrets.")
-    elif not topic:
-        st.error("Please provide a video topic.")
-    else:
-        # Fallback sequence using currently active Google models
-        all_models = ["gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-1.5-flash"]
-        fallback_models = [preferred_model] + [m for m in all_models if m != preferred_model]
-        
-        client = genai.Client(api_key=gemini_api_key.strip())
-        user_prompt = f"Create a full package for a video about '{topic}'. Audience: {target_audience}. Tone: {tone}. Target duration: {duration}."
-        
-        response_text = None
-        used_model = None
 
-        with st.spinner("Writing script and generating package..."):
-            for model_id in fallback_models:
-                try:
-                    response = client.models.generate_content(
-                        model=model_id,
-                        contents=user_prompt,
-                        config=types.GenerateContentConfig(
-                            system_instruction=SYSTEM_PROMPT,
-                            response_mime_type="application/json",
-                            temperature=0.7
-                        )
-                    )
-                    response_text = response.text
-                    used_model = model_id
-                    break
-                except APIError as e:
-                    # Catch overloads (503), deprecations (404), and rate-limits to continue failover
-                    err_str = str(e).upper()
-                    if any(code in err_str for code in ["503", "404", "UNAVAILABLE", "NOT_FOUND", "RESOURCE_EXHAUSTED"]):
-                        st.warning(f"⚠️ `{model_id}` unavailable or overloaded. Trying next backup model...")
-                        continue
-                    else:
-                        st.error(f"API Error on {model_id}: {e}")
-                        break
-                except Exception as ex:
-                    st.error(f"Unexpected Error on {model_id}: {ex}")
-                    break
+def saved_api_key() -> str:
+    """Read a configured key even when secrets.toml does not exist."""
+    key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if key:
+        return key
+    try:
+        return str(st.secrets.get("GEMINI_API_KEY", "")).strip()
+    except StreamlitSecretNotFoundError:
+        return ""
 
-        if response_text:
-            try:
-                st.session_state["generated_data"] = json.loads(response_text)
-                st.session_state["used_model"] = used_model
-                st.session_state["topic"] = topic
-            except json.JSONDecodeError:
-                st.error("Failed to parse structured JSON from model response. Please try again.")
 
-# Display results if available in session state
-if "generated_data" in st.session_state:
-    data = st.session_state["generated_data"]
-    used_model = st.session_state.get("used_model", "Gemini")
-    st.success(f"Generated successfully using `{used_model}`")
-    
-    tab_titles, tab_script, tab_desc, tab_thumb = st.tabs(["📌 Titles & Tags", "📜 Script & B-Roll", "📝 SEO Description", "🖼️ Thumbnail"])
-    
-    with tab_titles:
-        st.subheader("High-CTR Titles")
-        for i, t in enumerate(data.get("titles", []), 1):
-            st.write(f"**{i}.** {t}")
-        st.divider()
-        st.subheader("Tags")
-        st.code(", ".join(data.get("tags", [])))
-        
-    with tab_script:
-        st.subheader("Scene-by-Scene Script")
-        for scene in data.get("script", []):
-            with st.expander(f"⏱️ {scene.get('timestamp', 'Scene')}"):
-                st.write(f"**Visuals:** _{scene.get('visual_cue')}_")
-                st.write(f"**Narration:** {scene.get('narration')}")
-                
-    with tab_desc:
-        st.subheader("SEO Description")
-        st.text_area("Copy Description", value=data.get("description", ""), height=250)
-        
-    with tab_thumb:
-        st.subheader("Generated Thumbnail Concept (FLUX Engine)")
-        raw_prompt = data.get("thumbnail_prompt", st.session_state.get("topic", ""))
-        
-        # Interactive prompt editor
-        custom_prompt = st.text_input("Thumbnail Visual Prompt (Editable):", value=raw_prompt)
-        clean_prompt = custom_prompt.strip().replace("\n", " ")
-        encoded_prompt = urllib.parse.quote(clean_prompt)
-        
-        thumbnail_url = (
-            f"https://image.pollinations.ai/prompt/{encoded_prompt}"
-            f"?width=1280&height=720&model=flux&nologo=true&enhance=true"
+def validate_package(package: Package) -> Package:
+    if (
+        not package.titles
+        or not package.description.strip()
+        or not package.hashtags
+        or not package.script
+        or not package.thumbnail_prompt.strip()
+    ):
+        raise ValueError("The model returned an incomplete package. Please try again.")
+    if any(not value.strip() for value in package.titles + package.hashtags):
+        raise ValueError("The model returned blank titles or hashtags. Please try again.")
+    if any(not scene.narration.strip() for scene in package.script):
+        raise ValueError("The model returned an incomplete script. Please try again.")
+    package.hashtags = ["#" + tag.lstrip("#") for tag in package.hashtags]
+    return package
+
+
+def generate_package(client, prompt: str, preferred_model: str) -> tuple[Package, str]:
+    models = (preferred_model, *(m for m in TEXT_MODELS if m != preferred_model))
+    last_error = None
+    for model in models:
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT,
+                    response_mime_type="application/json",
+                    response_schema=Package,
+                    temperature=0.7,
+                ),
+            )
+            if not response.text:
+                raise ValueError("The model returned no text. Please try again.")
+            return validate_package(Package.model_validate_json(response.text)), model
+        except APIError as exc:
+            last_error = exc
+            # A missing or unavailable model can be retried with another model.
+            if getattr(exc, "code", None) not in (404, 503):
+                raise
+    raise last_error or RuntimeError("No text model was available.")
+
+
+def generate_thumbnail(client, prompt: str) -> bytes:
+    response = client.models.generate_content(
+        model=IMAGE_MODEL,
+        contents=f"Create a YouTube thumbnail image. {prompt}. No text or logos.",
+        config=types.GenerateContentConfig(
+            response_modalities=["IMAGE"],
+            image_config=types.ImageConfig(aspect_ratio="16:9", image_size="1K"),
+        ),
+    )
+    for part in response.parts or []:
+        if part.inline_data and part.inline_data.data:
+            image = Image.open(io.BytesIO(part.inline_data.data)).convert("RGB")
+            image = ImageOps.fit(image, (1280, 720), method=Image.Resampling.LANCZOS)
+            output = io.BytesIO()
+            image.save(output, format="JPEG", quality=88, optimize=True)
+            return output.getvalue()
+    raise ValueError("The image model returned no image. Try another prompt.")
+
+
+def script_text(package: Package) -> str:
+    return "\n\n".join(
+        f"{scene.timestamp}\nVisual: {scene.visual_cue}\nNarration: {scene.narration}"
+        for scene in package.script
+    )
+
+
+def main() -> None:
+    st.set_page_config(page_title="AI YouTube Creator", page_icon="🎬", layout="wide")
+    st.title("🎬 YouTube Content Studio AI")
+    st.caption("Generate scripts, titles, descriptions, hashtags, and a downloadable thumbnail.")
+
+    api_key = saved_api_key()
+    with st.sidebar:
+        st.header("Configuration")
+        if api_key:
+            st.caption("Gemini API key loaded from configuration.")
+        else:
+            api_key = st.text_input("Gemini API Key", type="password")
+        topic = st.text_input("Video Topic / Keyword", placeholder="e.g., How to Learn C++")
+        audience = st.text_input("Target Audience", placeholder="e.g., CS beginners")
+        tone = st.selectbox(
+            "Tone",
+            ["Fast-paced & Engaging", "Documentary & Serious", "Humorous & Punchy", "Step-by-Step Educational"],
         )
-        
-        st.image(thumbnail_url, caption="Generated via FLUX on Pollinations.ai (1280x720)", use_container_width=True)
-        st.caption("Tip: You can edit the prompt box above and press Enter to adjust the thumbnail.")
+        duration = st.selectbox("Target Duration", ["Shorts / Under 60s", "3 - 5 Minutes", "8 - 10 Minutes"])
+        preferred_model = st.selectbox("Text Model", TEXT_MODELS)
+        generate = st.button("Generate Package", type="primary", use_container_width=True)
+
+    if generate:
+        if not api_key.strip():
+            st.error("Enter a Gemini API key to generate content.")
+        elif not topic.strip():
+            st.error("Enter a video topic.")
+        else:
+            prompt = (
+                f"Topic: {topic.strip()}\nAudience: {audience.strip() or 'General viewers'}\n"
+                f"Tone: {tone}\nTarget duration: {duration}"
+            )
+            try:
+                with st.spinner("Generating your content package..."):
+                    package, model = generate_package(genai.Client(api_key=api_key.strip()), prompt, preferred_model)
+                st.session_state["package"] = package.model_dump()
+                st.session_state["used_model"] = model
+                st.session_state["thumbnail_bytes"] = None
+                st.session_state["thumbnail_prompt_input"] = package.thumbnail_prompt
+            except (APIError, ValidationError, ValueError) as exc:
+                st.error(f"Content generation failed: {exc}")
+
+    if "package" not in st.session_state:
+        return
+
+    package = Package.model_validate(st.session_state["package"])
+    st.success(f"Content generated with {st.session_state['used_model']}.")
+    titles_tab, script_tab, description_tab, thumbnail_tab = st.tabs(
+        ["Titles & Tags", "Script", "Description & Hashtags", "Thumbnail"]
+    )
+
+    with titles_tab:
+        st.subheader("Title ideas")
+        for index, title in enumerate(package.titles, 1):
+            st.write(f"{index}. {title}")
+        st.subheader("Search tags")
+        st.code(", ".join(package.tags))
+
+    with script_tab:
+        st.subheader("Scene-by-scene script")
+        for scene in package.script:
+            with st.expander(scene.timestamp):
+                st.write(f"**Visual:** {scene.visual_cue}")
+                st.write(f"**Narration:** {scene.narration}")
+        st.download_button("Download script", script_text(package), "script.txt", "text/plain")
+
+    with description_tab:
+        st.subheader("Video description")
+        st.code(package.description)
+        st.subheader("Hashtags")
+        st.code(" ".join(package.hashtags))
+        st.download_button(
+            "Download description and hashtags",
+            package.description + "\n\n" + " ".join(package.hashtags),
+            "description.txt",
+            "text/plain",
+        )
+
+    with thumbnail_tab:
+        st.subheader("Thumbnail")
+        st.text_input("Thumbnail visual prompt", key="thumbnail_prompt_input")
+        if st.button("Generate thumbnail"):
+            image_prompt = st.session_state["thumbnail_prompt_input"].strip()
+            if not image_prompt:
+                st.error("Enter a thumbnail prompt.")
+            elif not api_key.strip():
+                st.error("Enter a Gemini API key to generate the thumbnail.")
+            else:
+                try:
+                    with st.spinner("Generating thumbnail..."):
+                        st.session_state["thumbnail_bytes"] = generate_thumbnail(
+                            genai.Client(api_key=api_key.strip()), image_prompt
+                        )
+                except (APIError, ValueError, OSError) as exc:
+                    st.error(f"Thumbnail generation failed: {exc}")
+        if st.session_state.get("thumbnail_bytes"):
+            st.image(st.session_state["thumbnail_bytes"], caption="1280 × 720 thumbnail", use_container_width=True)
+            st.download_button(
+                "Download thumbnail",
+                st.session_state["thumbnail_bytes"],
+                "thumbnail.jpg",
+                "image/jpeg",
+            )
+
+    st.download_button(
+        "Download complete package (JSON)",
+        package.model_dump_json(indent=2),
+        "youtube_package.json",
+        "application/json",
+    )
+
+
+if __name__ == "__main__":
+    main()
