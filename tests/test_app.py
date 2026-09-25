@@ -8,7 +8,7 @@ from unittest.mock import patch
 from PIL import Image
 from streamlit.testing.v1 import AppTest
 
-from app import IMAGE_MODEL, Package, generate_package, generate_thumbnail
+from app import IMAGE_MODEL, Package, design_thumbnail, generate_package, generate_thumbnail
 
 
 class FakeModels:
@@ -76,6 +76,12 @@ class AppTests(unittest.TestCase):
             self.assertEqual(image.size, (1280, 720))
             self.assertEqual(image.format, "JPEG")
         self.assertEqual(models.calls[0]["model"], IMAGE_MODEL)
+
+    def test_quota_fallback_is_downloadable_youtube_size(self):
+        thumbnail = design_thumbnail("Python basics for beginners")
+        with Image.open(io.BytesIO(thumbnail)) as image:
+            self.assertEqual(image.size, (1280, 720))
+            self.assertEqual(image.format, "JPEG")
 
 
 if __name__ == "__main__":
